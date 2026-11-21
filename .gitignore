@@ -1,0 +1,4 @@
+/.cache/
+/target/
+/tools/node_modules/
+/CBDB-Yomitan-*.zip

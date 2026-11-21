@@ -1,0 +1,7 @@
+{
+  "name": "cbdb-standalone-import",
+  "private": true,
+  "dependencies": {
+    "mdb-reader": "3.2.2"
+  }
+}
