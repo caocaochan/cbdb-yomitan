@@ -38,6 +38,11 @@ div[data-sc-cbdb="facts"] {
     gap: .05em .6em;
 }
 
+div[data-sc-cbdb="description"] {
+    margin-bottom: .12em;
+    font-weight: 600;
+}
+
 span[data-sc-cbdb="dynasty"] {
     font-size: .88em;
     font-weight: 600;
@@ -73,6 +78,9 @@ span[data-sc-cbdb="kind"] {
 }
 
 div[data-sc-cbdb="source"] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .1em .7em;
     margin-top: .3em;
     font-size: .79em;
 }

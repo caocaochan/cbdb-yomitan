@@ -3,13 +3,20 @@ use opencc_fmmseg::OpenCC;
 use rusqlite::{Connection, OpenFlags, Row};
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{collections::HashSet, env, io::Write, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    io::Write,
+    path::Path,
+};
+use supplements::{Detail, Link, Supplement};
 use tempfile::NamedTempFile;
 use unicode_normalization::UnicodeNormalization;
 use unicode_script::{Script, UnicodeScript};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 mod readings;
+mod supplements;
 
 const BANK_SIZE: usize = 10_000;
 const ALIASES_SHOWN: usize = 8;
@@ -44,10 +51,19 @@ struct Term<'a>(
 );
 
 fn main() -> Result<()> {
-    let args = env::args_os().skip(1).collect::<Vec<_>>();
+    let mut args = env::args_os().skip(1).collect::<Vec<_>>();
+    let sources = if let Some(flag) = args.iter().position(|arg| arg == "--enrich") {
+        ensure!(
+            args.len() == flag + 3,
+            "Use --enrich <Wikidata.csv> <AcademiaSinica.ttl.gz>"
+        );
+        Some(args.split_off(flag))
+    } else {
+        None
+    };
     ensure!(
         matches!(args.len(), 3 | 5),
-        "Usage: cbdb-yomitan <CBDB.sqlite3> <output.zip> <source release YYYY-MM-DD> [<owner/repo> <release tag>]"
+        "Usage: cbdb-yomitan <CBDB.sqlite3> <output.zip> <source release YYYY-MM-DD> [<owner/repo> <release tag>] [--enrich <Wikidata.csv> <AcademiaSinica.ttl.gz>]"
     );
     let revision = args[2].to_str().context("Release date must be ASCII")?;
     ensure!(
@@ -101,7 +117,19 @@ fn main() -> Result<()> {
             "{homepage}/releases/download/{tag}/{PUBLIC_ARCHIVE}"
         ));
     }
-    build(Path::new(&args[0]), output, &index)
+    let supplements = if let Some(sources) = sources {
+        index["description"] = json!(
+            "Historical Chinese names in both scripts, with brief biographies, dates, offices, examinations, works, and source links where recorded."
+        );
+        index["attribution"] = json!(format!(
+            "{} Additional data: Wikidata (CC0) and Academia Sinica Center for Digital Cultures, Database of Names and Biographies, 2018 linked-data export (CC BY).",
+            index["attribution"].as_str().unwrap_or_default()
+        ));
+        supplements::load(Path::new(&sources[1]), Path::new(&sources[2]))?
+    } else {
+        HashMap::new()
+    };
+    build(Path::new(&args[0]), output, &index, &supplements)
 }
 
 fn github_component(value: &str) -> bool {
@@ -112,7 +140,12 @@ fn github_component(value: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, b'.' | b'_' | b'-'))
 }
 
-fn build(database: &Path, output: &Path, index: &Value) -> Result<()> {
+fn build(
+    database: &Path,
+    output: &Path,
+    index: &Value,
+    supplements: &HashMap<i64, Supplement>,
+) -> Result<()> {
     let db = Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("Opening {}", database.display()))?;
     let mut people_query = db.prepare(include_str!("people.sql"))?;
@@ -121,6 +154,7 @@ fn build(database: &Path, output: &Path, index: &Value) -> Result<()> {
     let mut aliases = aliases_query.query([])?;
     let mut next_alias = aliases.next()?;
     let converter = OpenCC::new();
+    let careers = supplements::recorded_careers(&db)?;
 
     let destination = output.parent().filter(|p| !p.as_os_str().is_empty());
     let mut archive = NamedTempFile::new_in(destination.unwrap_or(Path::new(".")))?;
@@ -138,6 +172,10 @@ fn build(database: &Path, output: &Path, index: &Value) -> Result<()> {
     let mut row_count = 0;
     let mut person_count = 0;
     let mut skipped_count = 0;
+    let mut description_count = 0;
+    let mut detail_count = 0;
+    let mut sinica_count = 0;
+    let mut link_count = 0;
     while let Some(row) = people.next()? {
         let person = read_person(row)?;
         let mut person_aliases = Vec::new();
@@ -158,6 +196,35 @@ fn build(database: &Path, output: &Path, index: &Value) -> Result<()> {
             continue;
         }
         person_count += 1;
+
+        let supplement = supplements.get(&person.id);
+        if supplement.is_some()
+            && person.id == 30257
+            && person.name == "曹操"
+            && !person_aliases.iter().any(|alias| alias.name == "孟德")
+        {
+            person_aliases.insert(
+                0,
+                Alias {
+                    name: "孟德".into(),
+                    reading: "Mèngdé".into(),
+                    kind: Some("字".into()),
+                    code: Some(4),
+                },
+            );
+        }
+        let official = careers.get(&person.id);
+        let sinica = supplement
+            .and_then(|entry| entry.title.as_ref())
+            .filter(|_| official.is_none() || person.id == 438100);
+        let detail = sinica.map(|title| &title.detail).or(official);
+        let description = supplement.and_then(|entry| entry.description.as_deref());
+        let reading_link = supplement.and_then(|entry| entry.link.as_ref());
+        let authority_link = sinica.map(|entry| &entry.link);
+        description_count += usize::from(description.is_some());
+        detail_count += usize::from(detail.is_some());
+        sinica_count += usize::from(authority_link.is_some());
+        link_count += usize::from(reading_link.is_some());
 
         let mut terms = Vec::new();
         let mut seen = HashSet::new();
@@ -187,8 +254,25 @@ fn build(database: &Path, output: &Path, index: &Value) -> Result<()> {
             }
         }
 
-        let canonical_card = [profile(&person, &person_aliases, false)];
-        let alternate_card = (terms.len() > 1).then(|| [profile(&person, &person_aliases, true)]);
+        let links = [reading_link, authority_link];
+        let canonical_card = [profile(
+            &person,
+            &person_aliases,
+            false,
+            description,
+            detail,
+            links,
+        )];
+        let alternate_card = (terms.len() > 1).then(|| {
+            [profile(
+                &person,
+                &person_aliases,
+                true,
+                description,
+                detail,
+                links,
+            )]
+        });
         for (term, reading, primary) in terms {
             if row_count % BANK_SIZE == 0 {
                 if !bank.is_empty() {
@@ -231,6 +315,9 @@ fn build(database: &Path, output: &Path, index: &Value) -> Result<()> {
         .with_context(|| format!("Writing {}", output.display()))?;
     println!("{person_count} people, {row_count} lookup entries, {bank_number} banks");
     println!("Skipped {skipped_count} rows without a searchable Chinese name (excluding ID 0)");
+    println!(
+        "{description_count} short descriptions, {detail_count} selected details ({sinica_count} from Academia Sinica), {link_count} reading links"
+    );
     Ok(())
 }
 
@@ -360,7 +447,14 @@ fn detail(label: &str, content: impl Serialize) -> Value {
     )
 }
 
-fn profile(person: &Person, aliases: &[Alias], show_name: bool) -> Value {
+fn profile(
+    person: &Person,
+    aliases: &[Alias],
+    show_name: bool,
+    description: Option<&str>,
+    evidence: Option<&Detail>,
+    links: [Option<&Link>; 2],
+) -> Value {
     let mut blocks = Vec::new();
     if show_name {
         let mut identity = vec![span("name", &person.name, true)];
@@ -368,6 +462,9 @@ fn profile(person: &Person, aliases: &[Alias], show_name: bool) -> Value {
             identity.push(span("romanization", &person.reading, false));
         }
         blocks.push(node("div", "identity", identity));
+    }
+    if let Some(description) = description {
+        blocks.push(node("div", "description", description));
     }
 
     let mut facts = Vec::new();
@@ -382,6 +479,13 @@ fn profile(person: &Person, aliases: &[Alias], show_name: bool) -> Value {
     }
     if let Some((label, place, han)) = &person.place {
         blocks.push(detail(label, span("place", place, *han)));
+    }
+    if let Some(evidence) = evidence {
+        let mut line = vec![span("name-detail", &evidence.name, true)];
+        if let Some(year) = evidence.year {
+            line.push(span("period", &format!(" ({year})"), false));
+        }
+        blocks.push(detail(evidence.label, line));
     }
 
     let mut seen_aliases = HashSet::new();
@@ -410,14 +514,14 @@ fn profile(person: &Person, aliases: &[Alias], show_name: bool) -> Value {
         blocks.push(detail("Other names", other_names));
     }
 
-    blocks.push(node(
-        "div",
-        "source",
-        json!({
+    let mut sources = vec![json!({
             "tag": "a",
             "href": format!("https://cbdb.fas.harvard.edu/cbdbapi/person.php?id={}", person.id),
-            "content": format!("CBDB #{} ↗", person.id),
-        }),
-    ));
+            "content": format!("CBDB #{}", person.id),
+    })];
+    for link in links.into_iter().flatten() {
+        sources.push(json!({"tag": "a", "href": link.url, "content": link.label}));
+    }
+    blocks.push(node("div", "source", sources));
     json!({"type": "structured-content", "content": node("div", "profile", blocks)})
 }

@@ -24,6 +24,19 @@ const tables = {
     ALTNAME_CODES: {
         c_name_type_code: 'INTEGER PRIMARY KEY', c_name_type_desc_chn: 'TEXT',
     },
+    POSTED_TO_OFFICE_DATA: {
+        c_personid: 'INTEGER', c_office_id: 'INTEGER', c_firstyear: 'INTEGER',
+        c_lastyear: 'INTEGER', c_assume_office_code: 'INTEGER',
+    },
+    OFFICE_CODES: { c_office_id: 'INTEGER PRIMARY KEY', c_office_chn: 'TEXT' },
+    ENTRY_DATA: { c_personid: 'INTEGER', c_entry_code: 'INTEGER', c_year: 'INTEGER' },
+    ENTRY_CODES: { c_entry_code: 'INTEGER PRIMARY KEY', c_entry_desc_chn: 'TEXT' },
+    BIOG_TEXT_DATA: {
+        c_personid: 'INTEGER', c_textid: 'INTEGER', c_role_id: 'INTEGER', c_year: 'INTEGER',
+    },
+    TEXT_CODES: {
+        c_textid: 'INTEGER PRIMARY KEY', c_title_chn: 'TEXT', c_extant: 'INTEGER',
+    },
 };
 
 const [output, ...inputs] = process.argv.slice(2);
