@@ -12,6 +12,8 @@ Try **蘇軾**, **苏轼**, **東坡居士**, or **东坡居士**. They point to
 
 The popup displays up to eight aliases. Single-character birth-order designations and surnames remain visible in the profile when present and are left out of the lookup index. Script-converted forms are generated with OpenCC dictionaries and can be ambiguous for rare names.
 
+Mandarin readings show tone marks, such as **Cáo Cāo** for **曹操**. The converter adds tones using the recorded CBDB spelling and a character pronunciation dictionary. It leaves readings blank when the spelling cannot be matched to the characters. Tones may still be ambiguous when several readings share the same spelling.
+
 ## Data and attribution
 
 The public dictionary adapts **CBDB_bi_20250520, build 20250604**, from the China Biographical Database Project (CBDB). It uses [the standalone data published through Harvard Dataverse](https://dataverse.harvard.edu/file.xhtml?fileId=14008421). The public dictionary data are distributed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) under [CBDB's data terms](https://cbdb.hsites.harvard.edu/cbdb-data-licensing-terms).
@@ -39,7 +41,7 @@ node --max-old-space-size=4096 tools/access-to-sqlite.mjs .cache/cbdb-public.sql
 Use a redistributable CBDB source and a release tag in `YYYY.MM.DD.N` format greater than the previous tag. From the repository root, build and attach these assets to a regular GitHub release. The example uses the date of the data release independently of the dictionary revision.
 
 ```powershell
-$tag = '2026.11.21.2'
+$tag = '2026.11.21.3'
 $sourceDate = '2025-05-20'
 $releaseDir = ".cache/release-$tag"
 New-Item -ItemType Directory -Force $releaseDir | Out-Null

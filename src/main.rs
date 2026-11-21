@@ -9,6 +9,8 @@ use unicode_normalization::UnicodeNormalization;
 use unicode_script::{Script, UnicodeScript};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
+mod readings;
+
 const BANK_SIZE: usize = 10_000;
 const ALIASES_SHOWN: usize = 8;
 const PUBLIC_ARCHIVE: &str = "CBDB-Yomitan.zip";
@@ -255,10 +257,12 @@ fn read_person(row: &Row<'_>) -> rusqlite::Result<Person> {
     };
     let native = bilingual(row, 12, 13)?.map(|(name, han)| ("Native place", name, han));
     let index = bilingual(row, 14, 15)?.map(|(name, han)| ("Index place", name, han));
+    let name = text_field(row, 1)?.unwrap_or_default();
+    let reading = person_reading(row, 2, &name)?;
     Ok(Person {
         id: row.get(0)?,
-        name: text_field(row, 1)?.unwrap_or_default(),
-        reading: text_field(row, 2)?.unwrap_or_default(),
+        name,
+        reading,
         dynasty: bilingual(row, 3, 4)?,
         period,
         place: native.or(index),
@@ -275,12 +279,19 @@ fn read_alias(row: &Row<'_>) -> rusqlite::Result<Option<Alias>> {
         Some(5) => Some("號".into()),
         _ => text_field(row, 4)?,
     };
+    let reading = person_reading(row, 2, &name)?;
     Ok(Some(Alias {
         name,
-        reading: text_field(row, 2)?.unwrap_or_default(),
+        reading,
         kind,
         code,
     }))
+}
+
+fn person_reading(row: &Row<'_>, column: usize, name: &str) -> rusqlite::Result<String> {
+    Ok(text_field(row, column)?
+        .and_then(|source| readings::tone_marked(name, &source))
+        .unwrap_or_default())
 }
 
 fn text_field(row: &Row<'_>, column: usize) -> rusqlite::Result<Option<String>> {
